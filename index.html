@@ -5,14 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video Metadata Forger</title>
     
-    <!-- Script Keamanan COI untuk GitHub Pages -->
-    <script src="coi-serviceworker.js"></script>
-    
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- FFmpeg WASM -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <!-- FFmpeg WASM v0.11.6 (Versi stabil yang tidak butuh Service Worker rumit di GitHub Pages) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.11.6/ffmpeg.min.js"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col items-center justify-center p-4 font-sans">
 
@@ -76,7 +73,7 @@
         </div>
 
         <div id="statusBox" class="mt-6 hidden">
-            <p id="statusText" class="text-sm text-center text-yellow-400 mb-2">Memuat engine FFmpeg ke memori browser (harap tunggu)...</p>
+            <p id="statusText" class="text-sm text-center text-yellow-400 mb-2">Memuat engine FFmpeg...</p>
             <div class="w-full bg-gray-700 rounded-full h-2.5 overflow-hidden">
                 <div id="progressBar" class="bg-cyan-500 h-2.5 w-0 transition-all duration-300"></div>
             </div>
@@ -90,44 +87,8 @@
     </div>
 
     <script>
-        let ffmpegInstance = null;
-
-        async function loadFFmpegEngine() {
-            if (ffmpegInstance) return ffmpegInstance;
-            
-            const statusBox = document.getElementById('statusBox');
-            const statusText = document.getElementById('statusText');
-            
-            statusBox.classList.remove('hidden');
-            statusText.innerText = "Memuat engine FFmpeg ke memori browser (harap tunggu)...";
-
-            const { FFmpeg } = FFmpegWASM;
-            const ffmpeg = new FFmpeg();
-            
-            const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-            
-            ffmpeg.on('log', ({ message }) => {
-                console.log(message);
-                if(message.includes('Processing') || message.includes('Duration')) {
-                    statusText.innerText = "Sedang menyuntikkan metadata...";
-                }
-            });
-
-            // Menggunakan fetch standar untuk menghindari error FFmpegUtil
-            const toBlobURL = async (url, mimeType) => {
-                const resp = await fetch(url);
-                const body = await resp.blob();
-                return URL.createObjectURL(new Blob([body], { type: mimeType }));
-            };
-
-            await ffmpeg.load({
-                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            });
-
-            ffmpegInstance = ffmpeg;
-            return ffmpegInstance;
-        }
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ log: true });
 
         async function processVideo() {
             const fileInput = document.getElementById('videoFile');
@@ -156,15 +117,17 @@
             statusBox.classList.remove('hidden');
 
             try {
-                const ffmpeg = await loadFFmpegEngine();
+                if (!ffmpeg.isLoaded()) {
+                    statusText.innerText = "Memuat engine FFmpeg ke memori browser...";
+                    await ffmpeg.load();
+                }
+
                 statusText.innerText = "Mengeksekusi penghapusan & penggantian data...";
 
                 const inputName = 'input.mp4';
                 const outputName = 'output.mp4';
 
-                // Membaca file video menggunakan Uint8Array bawaan browser
-                const fileData = new Uint8Array(await file.arrayBuffer());
-                await ffmpeg.writeFile(inputName, fileData);
+                ffmpeg.FS('writeFile', inputName, await fetchFile(file));
 
                 let ffmpegArgs = [
                     '-i', inputName,
@@ -184,9 +147,9 @@
 
                 ffmpegArgs.push(outputName);
 
-                await ffmpeg.exec(ffmpegArgs);
+                await ffmpeg.run(...ffmpegArgs);
 
-                const data = await ffmpeg.readFile(outputName);
+                const data = ffmpeg.FS('readFile', outputName);
                 const blob = new Blob([data.buffer], { type: file.type || 'video/mp4' });
                 const url = URL.createObjectURL(blob);
                 
